@@ -32,40 +32,26 @@ initialize() {
 
 void
 check_unwaited_background_processes(pid_t *pgid) {
-	pid_t child_pid, waited_pid;
+	pid_t gpid, waited_pid;
 	int status;
-	child_pid = getpgrp();
-	if (child_pid == *pgid) {
+	gpid = getpgrp();
+	if (gpid == *pgid) {
 		do {
-			waited_pid = waitpid(child_pid, &status, WNOHANG);
+			waited_pid = waitpid(gpid, &status, WNOHANG);
 			// exited status
 			if (WIFEXITED(status) != 0) {
-				fprintf(stderr, "Child process %d done. Exit status %d.\n", child_pid, status);
+				fprintf(stderr, "Child process %d done. Exit status %d.\n", getpid(), status);
 			}
 			// signaled status
 			if (WIFSIGNALED(status) != 0) {
-				fprintf(stderr, "Child process %d done. Signaled %d.\n", child_pid, status);
+				fprintf(stderr, "Child process %d done. Signaled %d.\n", getpid(), status);
 			}
 			// stopped	
 			if (WIFSTOPPED(status) != 0) {
-				fprintf(stderr, "Child process %d stopped. Continuing.\n", child_pid);
+				fprintf(stderr, "Child process %d stopped. Continuing.\n", getpid());
 			}
 		} while (waited_pid > 0);
 	}
-	/*
-	// exited status
-	if (WIFEXITED(status) != 0) {
-		fprintf(stderr, "Child process %d done. Exit status %d.\n", child_pid, status);
-	}
-	// signaled status
-	if (WIFSIGNALED(status) != 0) {
-		fprintf(stderr, "Child process %d done. Signaled %d.\n", child_pid, status);
-	}
-	// stopped	
-	if (WIFSTOPPED(status) != 0) {
-		fprintf(stderr, "Child process %d stopped. Continuing.\n", child_pid);
-	}
-	*/
 }
 
 int
@@ -121,36 +107,35 @@ create_process(char **args,size_t size) {
 	for (int i = 0; i < size; i++) {
 		fputs(args[i],stdout);
 	}
-	//char *cmd = malloc(sizeof(char)*strlen("/bin/")+1);
-	//strcpy(cmd,"/bin/");
-	//strcat(cmd, args[0]);
-	//char *newargv[] = {cmd, "-al", NULL};
-	/*
-	int child_status;
-	pid_t spawnpid = fork();
-	int ret = -1;
-	switch (spawnpid) {
-		case -1:
-			perror("fork() failed");
-			break;
-		case 0:
-			fputs("\t\nchild executing process\t\n",stdout);
-			fflush(stdout);
-			execlp(args[0], "-al",NULL);
-			//execv(newargv[0], newargv);
-			perror("execv");
-			break;
-		default:
-			fputs("\t\nspawnpid is the child so parent executing\t\n",stdout);
-			fflush(stdout);
-			//spawnpid = waitpid(spawnpid,&child_status, 0);
-			break;
-	}
-	fputs("\t\nexecuting by both parent and child pids\t\n",stdout);
-	return spawnpid;
-	*/
+	pid_t cpid, w;
+	int wstatus;
+	cpid = fork();
+	if (cpid == -1) {
+		perror("fork");
+		exit(-1);
+	} else if (cpid == 0) { 
+		printf("Child PID is %jd\n", (intmax_t) getpid());
+		do {
+			w = waitpid(cpid, &wstatus, WNOHANG);
+			if (w == -1) {
+				perror("waitpid");
+				exit(-1);
+			}
+			if (WIFEXITED(wstatus)) {
+				printf("exited, status=%d\n", WEXITSTATUS(wstatus));
+			} else if (WIFSIGNALED(wstatus)) {
+				printf("killed by signal %d\n", WTERMSIG(wstatus));
+			} else if (WIFSTOPPED(wstatus)) {
+				printf("stopped by signal %d\n", WSTOPSIG(wstatus));
+			} else if (WIFCONTINUED(wstatus)) {
+				printf("continued\n");
+			}
+		} while (!WIFEXITED(wstatus) && !WIFSIGNALED(wstatus));
+		exit(-1);
+	} else {
 
-	return 0;
+	}
+
 }
 
 int
@@ -158,7 +143,7 @@ main(int argc, char *argv[])
 {
 	pid_t smallsh_pgid = getpgid(initialize());
 	pid_t *pgid_ptr = &smallsh_pgid;
-	fprintf(stdout,"smallsh pid: %d\n",*pgid_ptr);
+	fprintf(stdout,"smallsh pgid: %d\n",*pgid_ptr);
 	fflush(stdout);
 	if (argc == 1) {
 		char *line = NULL;
@@ -166,11 +151,9 @@ main(int argc, char *argv[])
 		do {
 			fputs(getenv("$"), stdout);
 			ssize_t nread = getline(&line, &len, stdin);
-			//printf("%d | %d\n",nread, get_line_length(line));
 			if (nread < 0) return errno;
 			split_line(line);
-			if (strstr(line, "exit") != NULL || strcmp(line, "exit\n") == 0) {
-				printf("%d\n",4);
+			if (strstr(line, "exit") != NULL || strstr(line, "exit ") != NULL || strcmp(line, "exit\n") == 0) {
 				break;
 			}
 			fflush(stdout);
