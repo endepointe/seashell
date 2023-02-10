@@ -18,8 +18,8 @@ void test(void*,void*) {
 
 int errno;
 int setenv(const char*,const char*,int);
-int create_process(char**,size_t);
-
+int create_process(char**);
+static int t = 0;
 
 static int 
 initialize() {
@@ -84,59 +84,93 @@ match_expansions(char* str) {
 	return str;
 }
 
-int
+char**
 split_line(char* line) {
 	char** tokens = NULL;
 	size_t token_count = 0;
 	char* saveptr = NULL;
-	saveptr = strtok(line, " ");
+	saveptr = strtok(line, " \n\t");
 	while (saveptr) {
 		tokens = (char**)realloc(tokens, (token_count + 1) * sizeof(char*));
 		char* str = match_expansions(saveptr);
 		tokens[token_count] = (char*)malloc(strlen(str) + 1);
 		strcpy(tokens[token_count], str);
+		size_t len = strlen(tokens[token_count]);
+		if (tokens[token_count][len-1] == '\n') {
+			tokens[token_count][len-1] = '\0';
+		}
 		token_count++;
 		saveptr = strtok(NULL, " ");
 	}	
-	create_process(tokens,token_count);
-	return 0;
+	tokens = (char**)realloc(tokens, (token_count + 1) * sizeof(char*));
+	tokens[token_count] = NULL;
+	return tokens;
 }
 
-int 
-create_process(char **args,size_t size) {
-	for (int i = 0; i < size; i++) {
-		fputs(args[i],stdout);
+int
+create_process(char **args) {
+	if (strcmp(args[0],"exit") == 0) {
+		return -1;
 	}
 	pid_t cpid, w;
 	int wstatus;
 	cpid = fork();
-	if (cpid == -1) {
-		perror("fork");
-		exit(-1);
-	} else if (cpid == 0) { 
-		printf("Child PID is %jd\n", (intmax_t) getpid());
-		do {
-			w = waitpid(cpid, &wstatus, WNOHANG);
-			if (w == -1) {
-				perror("waitpid");
-				exit(-1);
+	switch (cpid) {
+		case -1:
+			fprintf(stderr,"fork() failed on %d\n"),getpid();
+			wstatus = -1;
+			break;
+		case 0:
+			if (strstr("/",args[0]) == NULL) {
+				//char *cmd = malloc(sizeof(char)*strlen(args[0]) + 6);
+				//fflush(stdout);
+				char **tmp = args;
+				char t[2] = " "; 
+				size_t i = 0;
+				while (args[i] != NULL) {
+					if (strchr(args[i],'\0') != NULL) {
+						//printf("null found:%s\n",args[i]);
+						args[strlen(args[i])-1] =  0;
+					}
+					//strcat(t,tmp[i]);
+					i++;
+				}
+	
+				execv(args[0],args);	
+				//execl(args[0],*args);
+				/*
+				if (t < 1) {
+					char *a[] = {"bash", "-c", "exit", "144",NULL};
+					execvp(a[0],a);
+					t += 1;
+				}else {
+					execvp(args[0],args);	
+				}
+				*/
 			}
-			if (WIFEXITED(wstatus)) {
-				printf("exited, status=%d\n", WEXITSTATUS(wstatus));
-			} else if (WIFSIGNALED(wstatus)) {
-				printf("killed by signal %d\n", WTERMSIG(wstatus));
-			} else if (WIFSTOPPED(wstatus)) {
-				printf("stopped by signal %d\n", WSTOPSIG(wstatus));
-			} else if (WIFCONTINUED(wstatus)) {
-				printf("continued\n");
-			}
-		} while (!WIFEXITED(wstatus) && !WIFSIGNALED(wstatus));
-		exit(-1);
-	} else {
-
+			break;
+		default:
+			do {
+				w = waitpid(cpid, &wstatus, 0);
+				if (w == -1) {
+					break;
+				}
+				if (WIFEXITED(wstatus)) {
+					printf("exited, status=%d\n", WEXITSTATUS(wstatus));
+				} else if (WIFSIGNALED(wstatus)) {
+					printf("killed by signal %d\n", WTERMSIG(wstatus));
+				} else if (WIFSTOPPED(wstatus)) {
+					printf("stopped by signal %d\n", WSTOPSIG(wstatus));
+				} else if (WIFCONTINUED(wstatus)) {
+					printf("continued\n");
+				}
+			} while (w > 0);
+			break;
 	}
-
+	return wstatus;
 }
+
+
 
 int
 main(int argc, char *argv[])
@@ -152,11 +186,13 @@ main(int argc, char *argv[])
 			fputs(getenv("$"), stdout);
 			ssize_t nread = getline(&line, &len, stdin);
 			if (nread < 0) return errno;
-			split_line(line);
-			if (strstr(line, "exit") != NULL || strstr(line, "exit ") != NULL || strcmp(line, "exit\n") == 0) {
+			char **tokens = split_line(line);
+			int status = create_process(tokens);
+			if (status < 0) {
+				free(tokens);
 				break;
 			}
-			fflush(stdout);
+			free(tokens);
 			check_unwaited_background_processes(pgid_ptr);
 		} while (1);
 		free(line);
