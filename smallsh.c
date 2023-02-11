@@ -13,10 +13,8 @@ void test(void*,void*) {
 #endif
 }
 
-//const char *const sys_errlist[];
-//int sys_nerr;
-
 int errno;
+pid_t getpgid(pid_t);
 int setenv(const char*,const char*,int);
 int create_process(char**);
 static int t = 0;
@@ -31,27 +29,28 @@ initialize() {
 }
 
 void
-check_unwaited_background_processes(pid_t *pgid) {
+check_unwaited_background_processes(pid_t *pgid, int *status) {
 	pid_t gpid, waited_pid;
-	int status;
+	//int status;
 	gpid = getpgrp();
-	if (gpid == *pgid) {
+	//if (gpid == *pgid) {
 		do {
-			waited_pid = waitpid(gpid, &status, WNOHANG);
+			waited_pid = waitpid(-1, status, WNOHANG);
 			// exited status
-			if (WIFEXITED(status) != 0) {
-				fprintf(stderr, "Child process %d done. Exit status %d.\n", getpid(), status);
+			if (WIFEXITED(*status)) {
+				fprintf(stderr, "Child process %d done. Exit status %d.\n", getpid(), WEXITSTATUS(*status));
 			}
 			// signaled status
-			if (WIFSIGNALED(status) != 0) {
-				fprintf(stderr, "Child process %d done. Signaled %d.\n", getpid(), status);
+			if (WIFSIGNALED(*status)) {
+				fprintf(stderr, "Child process %d done. Signaled %d.\n", getpid(), *status);
+				exit(*status);
 			}
 			// stopped	
-			if (WIFSTOPPED(status) != 0) {
+			if (WIFSTOPPED(*status)) {
 				fprintf(stderr, "Child process %d stopped. Continuing.\n", getpid());
 			}
 		} while (waited_pid > 0);
-	}
+	//}
 }
 
 int
@@ -65,14 +64,14 @@ get_line_length(char* line) {
 char*
 n_to_c(size_t num) {
 	char* str = (char*)malloc(10*sizeof(char));
-	sprintf(str, "%d", num);
+	sprintf(str, "%d\n", num);
 	return str;
 }
 
 char*
 match_expansions(char* str) {
 	if (strstr(str,"~/") != NULL) {
-		char *s = malloc(sizeof(char) * (strlen(getenv("HOME")) + strlen(str) + 1));
+		char *s = malloc(sizeof(char) * (strlen(getenv("HOME")) + strlen(str) + 1));  
 		str++;
 		strcpy(s,getenv("HOME"));
 		strcat(s,str);
@@ -95,12 +94,8 @@ split_line(char* line) {
 		char* str = match_expansions(saveptr);
 		tokens[token_count] = (char*)malloc(strlen(str) + 1);
 		strcpy(tokens[token_count], str);
-		size_t len = strlen(tokens[token_count]);
-		if (tokens[token_count][len-1] == '\n') {
-			tokens[token_count][len-1] = '\0';
-		}
 		token_count++;
-		saveptr = strtok(NULL, " ");
+		saveptr = strtok(NULL, " \n\t");
 	}	
 	tokens = (char**)realloc(tokens, (token_count + 1) * sizeof(char*));
 	tokens[token_count] = NULL;
@@ -114,44 +109,34 @@ create_process(char **args) {
 	}
 	pid_t cpid, w;
 	int wstatus;
+	int test = -7;
+	int *ptest = &test;
+	int tstatus;
 	cpid = fork();
+
 	switch (cpid) {
 		case -1:
 			fprintf(stderr,"fork() failed on %d\n"),getpid();
 			wstatus = -1;
 			break;
 		case 0:
+			*ptest = 77;
+			printf("The cpid %d test value is %d\n", cpid, test);
+			fflush(stdout);
 			if (strstr("/",args[0]) == NULL) {
-				//char *cmd = malloc(sizeof(char)*strlen(args[0]) + 6);
-				//fflush(stdout);
-				char **tmp = args;
-				char t[2] = " "; 
-				size_t i = 0;
-				while (args[i] != NULL) {
-					if (strchr(args[i],'\0') != NULL) {
-						//printf("null found:%s\n",args[i]);
-						args[strlen(args[i])-1] =  0;
-					}
-					//strcat(t,tmp[i]);
-					i++;
-				}
-	
-				execv(args[0],args);	
-				//execl(args[0],*args);
-				/*
-				if (t < 1) {
-					char *a[] = {"bash", "-c", "exit", "144",NULL};
-					execvp(a[0],a);
-					t += 1;
-				}else {
-					execvp(args[0],args);	
-				}
-				*/
+				execvp(args[0],args);	
 			}
+			execv(args[0],args);
 			break;
 		default:
+			printf("The ppid %d test value is %d\n", cpid, test);
 			do {
-				w = waitpid(cpid, &wstatus, 0);
+				w = waitpid(cpid,&wstatus,WUNTRACED);
+				//w = waitpid(cpid,&wstatus,WUNTRACED);
+				// wait for any process
+				//w = waitpid(-1, &wstatus, 0);
+				//w = waitpid(-1, &wstatus, WNOHANG);
+				//w = waitpid(cpid, &wstatus, 0);
 				if (w == -1) {
 					break;
 				}
@@ -186,6 +171,7 @@ main(int argc, char *argv[])
 			fputs(getenv("$"), stdout);
 			ssize_t nread = getline(&line, &len, stdin);
 			if (nread < 0) return errno;
+			if (nread == 1 && strcmp(line,"\n") == 0) continue;
 			char **tokens = split_line(line);
 			int status = create_process(tokens);
 			if (status < 0) {
@@ -193,7 +179,7 @@ main(int argc, char *argv[])
 				break;
 			}
 			free(tokens);
-			check_unwaited_background_processes(pgid_ptr);
+			check_unwaited_background_processes(pgid_ptr,&status);
 		} while (1);
 		free(line);
 		return 0;
